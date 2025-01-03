@@ -37,7 +37,7 @@ host = os.getenv("CHECKMARX_HOST")
 username = os.getenv("CHECKMARX_USERNAME")
 password = os.getenv("CHECKMARX_PASSWORD")
 CHECKMARX_CLIENT_SECRET = os.getenv("CHECKMARX_CLIENT_SECRET")
-
+CHECKMARX_RESPONSE_PATH = os.environ.get("CHECKMARX_RESPONSE_PATH", "response.json")
 
 
 # 
@@ -73,7 +73,7 @@ class CustomSessionWithRateLimitngHandler(requests.Session):
     def login_to_checkmarx(self):
         url = f"""{host}/cxrestapi/auth/identity/connect/token"""
 
-        payload = f'username={username}&password={password}&client_id=resource_owner_client&client_secret={CHECKMARX_CLIENT_SECRET}&grant_type=password&scope=sast_rest_api'
+        payload = f'username={username}&password={password}&client_id=resource_owner_sast_client&client_secret={CHECKMARX_CLIENT_SECRET}&grant_type=password&scope=access_control_api sast_api'
         headers = {
         'Accept': 'application/json;v=1.0',
         'Content-Type': 'application/x-www-form-urlencoded'
@@ -232,29 +232,30 @@ def ensure_project(project_name: str , team_id : int):
     return project_details
 
 
-def create_team(project_name: str):
-    url = f"""{host}/cxrestapi/auth/teams"""
+def create_team(team_name: str , parent_team_id : int):
+    url = f"""{host}/CxRestAPI/auth/teams"""
 
     headers = {
         'Accept': 'application/json;v=1.0',
-        'Content-Type': 'application/x-www-form-urlencoded'
+        # 'Content-Type': 'application/x-www-form-urlencoded'
     }
 
     data = {
-        "name": project_name,
-        "parentId": 1,  # team name :  bitbucket
+        "name": team_name,
+        "parentId": parent_team_id,  # team name :  bitbucket
         # "isPublic": True
     }
+    
+    print("create_team", team_name ,parent_team_id)
 
-    response = requests.post(url, headers=headers, json=data)
+    response = requests.post(  url, headers=headers, json=data)
     print(response.content , response.status_code, url)
-    data = response.json()
 
-    return get_team(project_name)
-
+    return get_team(team_name , parent_team_id)
 
 
-def get_team(team_name: str):
+
+def get_teams():
 
     url = f"""{host}/cxrestapi/auth/teams"""
 
@@ -265,9 +266,26 @@ def get_team(team_name: str):
     }
     response = requests.get( url, headers=headers)
     data = response.json()
+    
+    return data
+
+  
+
+def get_team(team_name: str , parent_team_id : int ):
+
+    url = f"""{host}/cxrestapi/auth/teams"""
+
+    headers = {
+
+        'Accept': 'application/json;v=1.0',
+        'Content-Type': 'application/x-www-form-urlencoded'
+    }
+    response = requests.get( url, headers=headers)
+    data = response.json()
+    
 
     found_project = next(
-        (obj for obj in data if obj["name"] == team_name), None)
+        (obj for obj in data if obj["name"].lower() == team_name.lower()  and obj["parentId"] == parent_team_id ), None)
     
 
     
@@ -275,20 +293,23 @@ def get_team(team_name: str):
 
 
 
-def ensure_team(team_name: str):
+def ensure_team(team_name: str , parent_team_id : int = 1):
 
-    project_details = get_team(team_name)
-    if project_details == None:
+    # get parent team id
+    if parent_team_id == None:
+        parent_team_id = 1
+
+    team_details = get_team(team_name, parent_team_id)
+        
+    if team_details == None:
         print("team not found. Will try to create!", team_name)
-        project_details = create_team(team_name)
+        team_details = create_team(team_name , parent_team_id)
 
-    if project_details == None:
-        raise Exception("Failed to create / fetch project")
+    if team_details == None:
+        raise Exception("Failed to create / fetch team")
 
-    # print("project created", project_name, project_details)
-    return project_details
+    return team_details
 
-    pass
 
 
 
@@ -308,7 +329,7 @@ def parse_scm_url(scm_url):
 
     if match:
         # Ensure workspace , and project exists. Naming convention will be : namespace@repository. source domain will be team name.
-        return  match.group("source")  ,  match.group("namespace") + "@" + match.group("repo")
+        return  [match.group("source")  ,  match.group("namespace")   ,  match.group("repo") ]
         
         # return  match.group("source") + "/" + match.group("namespace") + "/" + match.group("repo")
         
@@ -389,32 +410,72 @@ def get_git_info(folder_path):
         return None , None
 
 
-def main():
-        workspace , project = parse_scm_url(repo_url)
-        team_details = ensure_team(workspace)
 
-        project_details = ensure_project(   project , team_details["id"] )
-        
-        print("checkmarx-details", host , workspace , project, team_details)
-        
-        project_id = project_details['id']
-        
-        # Example usage
-        
-        branch , commit_id = get_git_info(folder_to_zip ) 
-        print("get_git_info", branch , commit_id)
-        
-        
-        was_zip_created = zip_folder(folder_to_zip, output_zip)
-        
-        print("was_zip_created", was_zip_created)
-        response = stream_file_to_checkmarx(project_id , output_zip , commit_id, branch)
-        print("checkmarx response:" , response)
-        
-        with open(os.environ.get("export_volume_path"   ) + "/response.json"   , "wb") as f:
-            f.write(response)
-        
-        
 
+
+# test_url = "https://rounak316@bitbucket.org/daamm/neo.git"
+# _ = parse_scm_url(test_url)
+# print(_)
+
+
+# test_url = "https://gitlab.com/studiogangster/cyclops.git"
+# _ = parse_scm_url(test_url)
+# print(_)
+
+
+# test_url = "https://code.sli.ke/qa/automation.git"
+# _ = parse_scm_url(test_url)
+# print(_)
+ 
 if __name__ == "__main__":
-    main()
+    
+    hypothetical__team = parse_scm_url(repo_url)
+
+    team_hierarchy = []
+    for slug in hypothetical__team:
+        for slug in slug.split("/"):
+            if len(slug):
+                team_hierarchy.append(slug)
+        
+
+    project_name = team_hierarchy[-1]
+    team_hierarchy = team_hierarchy[:-1]
+    
+    print("team_hierarchy", project_name)
+    print("team_hierarchy",  team_hierarchy)
+    
+    parent_team_id = None
+    
+    project_team_id = None
+    
+    for team_name in team_hierarchy:
+        print("ensuring", team_name , parent_team_id)
+        ensured_team = ensure_team(  team_name, parent_team_id )
+        print("ensured_team", ensured_team)
+        print("parent_team_id", ensured_team["id"])
+        parent_team_id = ensured_team["id"]
+        project_team_id = parent_team_id
+        
+    project_details = ensure_project(   project_name , project_team_id)
+    
+        
+    project_id = project_details['id']
+    
+    # Example usage
+    
+    branch , commit_id = get_git_info(folder_to_zip ) 
+    print("get_git_info", branch , commit_id)
+    
+    
+    was_zip_created = zip_folder(folder_to_zip, output_zip)
+    
+    print("was_zip_created", was_zip_created)
+    response = stream_file_to_checkmarx(project_id , output_zip , commit_id, branch)
+    print("checkmarx response:" , response)
+    
+    with open(  CHECKMARX_RESPONSE_PATH  , "wb") as f:
+        f.write(response)
+    
+
+
+    
